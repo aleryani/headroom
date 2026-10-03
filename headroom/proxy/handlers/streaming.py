@@ -14,6 +14,7 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
 from headroom.proxy.auth_mode import classify_client, supports_mid_turn_coalescing
+from headroom.proxy.body_forwarding import OutboundBody
 from headroom.proxy.handlers._debug_dump import write_upstream_error_dump
 from headroom.proxy.helpers import (
     RETRYABLE_OVERLOAD_STATUSES,
@@ -1014,6 +1015,7 @@ class StreamingMixin:
         session_key: str | None = None,
         conversation_key: str | None = None,
         conversation_tokens_saved: int | None = None,
+        outbound: OutboundBody | None = None,
         server_memory_tool_names: frozenset[str] | None = None,
     ) -> Response | StreamingResponse:
         """Stream response with metrics tracking and memory tool handling.
@@ -1060,6 +1062,7 @@ class StreamingMixin:
                 session_key=session_key,
                 conversation_key=conversation_key,
                 conversation_tokens_saved=conversation_tokens_saved,
+                outbound=outbound,
                 server_memory_tool_names=server_memory_tool_names,
             )
         except (Exception, asyncio.CancelledError):
@@ -1094,6 +1097,8 @@ class StreamingMixin:
         conversation_key: str | None = None,
         conversation_tokens_saved: int | None = None,
         server_memory_tool_names: frozenset[str] | None = None,
+        *,
+        outbound: OutboundBody | None = None,
     ) -> Response | StreamingResponse:
         """Actual streaming implementation, guarded by _stream_response's cleanup wrapper."""
         from fastapi.responses import Response, StreamingResponse
@@ -1129,11 +1134,15 @@ class StreamingMixin:
             log_outbound_request,
         )
 
-        outbound = select_outbound_body(
-            body=body,
-            original_body_bytes=original_body_bytes,
-            body_mutated=body_mutated,
-            mutation_reasons=list(mutation_reasons or []),
+        outbound = (
+            outbound
+            if outbound is not None
+            else select_outbound_body(
+                body=body,
+                original_body_bytes=original_body_bytes,
+                body_mutated=body_mutated,
+                mutation_reasons=list(mutation_reasons or []),
+            )
         )
         outbound_bytes, outbound_source = outbound.content, outbound.source
         outbound_headers = {**headers, "content-type": "application/json"}
@@ -1837,6 +1846,8 @@ class StreamingMixin:
         prefix_tracker: Any | None = None,
         optimized_messages: list[dict] | None = None,
         backend: Any | None = None,
+        *,
+        prepared: dict[str, Any] | None = None,
     ) -> StreamingResponse:
         """Stream response from Bedrock backend with metrics tracking.
 
@@ -1894,7 +1905,9 @@ class StreamingMixin:
                 # (issue #902).
                 yield b"event: ping\ndata: {}\n\n"
 
-                async for event in backend.stream_message(body, headers):
+                async for event in backend.stream_message(
+                    body, headers, **({"prepared": prepared} if prepared is not None else {})
+                ):
                     # Record TTFB on first event
                     if stream_state["ttfb_ms"] is None:
                         stream_state["ttfb_ms"] = (time.time() - start_time) * 1000
