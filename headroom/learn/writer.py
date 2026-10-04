@@ -165,10 +165,8 @@ def _merge_markdown_items(
             return None
         items: list[tuple[str | None, str, str]] = []
         for line in lines:
-            decoded = html.unescape(line)
-            id_match = _PATTERN_ID_PATTERN.search(decoded)
-            pattern_id = id_match.group(1) if id_match else None
-            visible = _PATTERN_ID_PATTERN.sub("", decoded).strip().casefold()
+            pattern_id = _tagged_pattern_id(line)
+            visible = _PATTERN_ID_PATTERN.sub("", line).strip().casefold()
             items.append((pattern_id, visible, line))
         return items
 
